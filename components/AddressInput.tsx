@@ -49,7 +49,7 @@ export function AddressInput({ value, onChange, onSelect, error }: AddressInputP
               if (!id || !label) return null;
               return { id, label, raw: suggestion };
             })
-            .filter((item): item is { id: string; label: string; raw: unknown } => Boolean(item));
+            .filter(Boolean) as Array<{ id: string; label: string; raw: unknown }>;
           setPredictions(next);
           setOpen(true);
         })

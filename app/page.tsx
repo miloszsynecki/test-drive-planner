@@ -67,7 +67,7 @@ function getTier(durationMinutes: number): "short" | "medium" | "long" {
 export default function Page() {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   const [loading, setLoading] = useState(false);
-  const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
+  const [routePath, setRoutePath] = useState<LatLng[]>([]);
   const [dealershipAddress, setDealershipAddress] = useState("");
   const [dealershipLatLng, setDealershipLatLng] = useState<LatLng | null>(null);
   const [waypoints, setWaypoints] = useState<LatLng[]>([]);
@@ -109,49 +109,66 @@ export default function Page() {
     }
   };
 
-  const getDurationMinutes = (result: google.maps.DirectionsResult): number =>
-    result.routes[0].legs.reduce((sum, leg) => sum + (leg.duration?.value ?? 0), 0) / 60;
-
-  const getUTurnCount = (result: google.maps.DirectionsResult): number => {
-    const steps = result.routes[0].legs.flatMap((leg) => leg.steps ?? []);
-    return steps.filter((s) => (s.maneuver ?? "").includes("uturn")).length;
+  const getPathFromRoute = (route: unknown): LatLng[] => {
+    const rawPath = (route as { path?: Array<{ lat?: number | (() => number); lng?: number | (() => number) }> }).path ?? [];
+    return rawPath
+      .map((point) => {
+        const lat = typeof point.lat === "function" ? point.lat() : point.lat;
+        const lng = typeof point.lng === "function" ? point.lng() : point.lng;
+        if (typeof lat !== "number" || typeof lng !== "number") return null;
+        return { lat, lng };
+      })
+      .filter((p): p is LatLng => Boolean(p));
   };
 
-  const getOverlapRatio = (result: google.maps.DirectionsResult): number => {
-    const routePath = result.routes[0].overview_path ?? [];
+  const getLegs = (route: unknown): Array<{ distanceMeters?: number; durationMillis?: number; steps?: Array<{ navigationInstruction?: { instructions?: string } }> }> =>
+    ((route as { legs?: Array<{ distanceMeters?: number; durationMillis?: number; steps?: Array<{ navigationInstruction?: { instructions?: string } }> }> }).legs ?? []);
+
+  const getDurationMinutes = (route: unknown): number => {
+    const totalMillis = getLegs(route).reduce((sum, leg) => sum + Number(leg.durationMillis ?? 0), 0);
+    return totalMillis / 1000 / 60;
+  };
+
+  const getUTurnCount = (route: unknown): number => {
+    const steps = getLegs(route).flatMap((leg) => leg.steps ?? []);
+    return steps.filter((step) =>
+      (step.navigationInstruction?.instructions ?? "").toLowerCase().includes("u-turn"),
+    ).length;
+  };
+
+  const getOverlapRatio = (route: unknown): number => {
+    const path = getPathFromRoute(route);
     const visited = new Set<string>();
     let repeated = 0;
-    for (const p of routePath) {
-      const key = `${p.lat().toFixed(4)}:${p.lng().toFixed(4)}`;
+    for (const p of path) {
+      const key = `${p.lat.toFixed(4)}:${p.lng.toFixed(4)}`;
       if (visited.has(key)) repeated += 1;
       visited.add(key);
     }
-    return routePath.length > 0 ? repeated / routePath.length : 0;
+    return path.length > 0 ? repeated / path.length : 0;
   };
 
-  const getDeadEndProxy = (result: google.maps.DirectionsResult): number => {
-    const steps = result.routes[0].legs.flatMap((leg) => leg.steps ?? []);
+  const getDeadEndProxy = (route: unknown): number => {
+    const steps = getLegs(route).flatMap((leg) => leg.steps ?? []);
     let count = 0;
     for (let i = 1; i < steps.length; i += 1) {
       const prev = steps[i - 1];
       const curr = steps[i];
-      const prevManeuver = prev.maneuver ?? "";
-      const currManeuver = curr.maneuver ?? "";
+      const prevInstruction = (prev.navigationInstruction?.instructions ?? "").toLowerCase();
+      const currInstruction = (curr.navigationInstruction?.instructions ?? "").toLowerCase();
       const shortOutAndBack =
-        (prev.distance?.value ?? 0) < 90 &&
-        (curr.distance?.value ?? 0) < 90 &&
-        prevManeuver.startsWith("turn") &&
-        currManeuver.startsWith("turn");
+        prevInstruction.includes("turn") &&
+        currInstruction.includes("turn");
       if (shortOutAndBack) count += 1;
     }
     return count;
   };
 
-  const makeFingerprint = (result: google.maps.DirectionsResult): string => {
-    const path = result.routes[0].overview_path ?? [];
+  const makeFingerprint = (route: unknown): string => {
+    const path = getPathFromRoute(route);
     return path
       .filter((_, idx) => idx % 4 === 0)
-      .map((p) => `${p.lat().toFixed(3)}:${p.lng().toFixed(3)}`)
+      .map((p) => `${p.lat.toFixed(3)}:${p.lng.toFixed(3)}`)
       .join("|");
   };
 
@@ -162,24 +179,23 @@ export default function Page() {
   };
 
   const calculateStats = (
-    result: google.maps.DirectionsResult,
+    route: unknown,
     avgSpeedKmh: number,
     requestedMinutes: number,
     variationSeed: number,
   ): GeneratedRouteStats => {
-    const route = result.routes[0];
-    const totalMeters = route.legs.reduce((sum, leg) => sum + (leg.distance?.value ?? 0), 0);
-    const totalSeconds = route.legs.reduce((sum, leg) => sum + (leg.duration?.value ?? 0), 0);
-    const totalDurationMinutes = totalSeconds / 60;
+    const legs = getLegs(route);
+    const totalMeters = legs.reduce((sum, leg) => sum + Number(leg.distanceMeters ?? 0), 0);
+    const totalDurationMinutes = getDurationMinutes(route);
 
     return {
       totalDistanceKm: totalMeters / 1000,
       totalDurationMinutes,
-      waypointCount: route.legs.length - 1,
+      waypointCount: legs.length,
       avgSpeedKmh,
       durationErrorPct: (Math.abs(totalDurationMinutes - requestedMinutes) / requestedMinutes) * 100,
-      uturnCount: getUTurnCount(result),
-      overlapRatio: getOverlapRatio(result),
+      uturnCount: getUTurnCount(route),
+      overlapRatio: getOverlapRatio(route),
       variationSeed,
     };
   };
@@ -195,7 +211,11 @@ export default function Page() {
 
     try {
       if (!window.google?.maps) throw new Error("Google Maps not loaded");
-      const service = new google.maps.DirectionsService();
+      const routesLib = (await google.maps.importLibrary("routes")) as unknown as {
+        Route: {
+          computeRoutes: (request: unknown) => Promise<{ routes?: unknown[] }>;
+        };
+      };
       const resolvedLatLng = input.latLng ?? (await resolveWithPlaces(input.address));
       if (!resolvedLatLng) throw new Error("Address not found");
 
@@ -208,18 +228,21 @@ export default function Page() {
       const routeWithWaypoints = async (
         allWaypoints: LatLng[],
         stopover: boolean,
-      ): Promise<google.maps.DirectionsResult> => {
-        return service.route({
+      ): Promise<unknown> => {
+        const response = await routesLib.Route.computeRoutes({
           origin: resolvedLatLng,
           destination: resolvedLatLng,
-          optimizeWaypoints: false,
           travelMode: google.maps.TravelMode.DRIVING,
-          waypoints: allWaypoints.map((point) => ({ location: point, stopover })),
+          intermediates: allWaypoints.map((point) => ({ location: point, via: !stopover })),
+          fields: ["path", "legs"],
         });
+        const route = response.routes?.[0];
+        if (!route) throw new Error("No route");
+        return route;
       };
 
       const candidates: Array<{
-        result: google.maps.DirectionsResult;
+        route: unknown;
         generatedWaypoints: LatLng[];
         score: number;
         durationError: number;
@@ -272,7 +295,7 @@ export default function Page() {
               uniquePenalty * PLANNER_CONFIG.weights.uniquenessPenalty;
 
             candidates.push({
-              result,
+              route: result,
               generatedWaypoints: pattern.waypoints,
               score,
               durationError,
@@ -323,7 +346,7 @@ export default function Page() {
       let best = pool[0];
 
       if (best.durationError > PLANNER_CONFIG.durationToleranceFallback) {
-        const actualMinutes = getDurationMinutes(best.result);
+        const actualMinutes = getDurationMinutes(best.route);
         if (actualMinutes > 0) {
           const adjustedRadiusScale =
             best.radiusScale * (input.durationMinutes / actualMinutes);
@@ -347,7 +370,7 @@ export default function Page() {
             if (adjustedDurationError < best.durationError) {
               best = {
                 ...best,
-                result: adjustedResult,
+                route: adjustedResult,
                 generatedWaypoints: best.stopover
                   ? adjustedWaypoints.filter((_, idx) => idx % 2 === 0)
                   : adjustedWaypoints,
@@ -360,17 +383,17 @@ export default function Page() {
         }
       }
 
-      const fingerprint = makeFingerprint(best.result);
+      const fingerprint = makeFingerprint(best.route);
       recentFingerprintsRef.current = [
         fingerprint,
         ...recentFingerprintsRef.current.filter((f) => f !== fingerprint),
       ].slice(0, 5);
 
-      setDirections(best.result);
+      setRoutePath(getPathFromRoute(best.route));
       setDealershipAddress(input.address);
       setDealershipLatLng(resolvedLatLng);
       setWaypoints(best.generatedWaypoints);
-      setStats(calculateStats(best.result, avgSpeed, input.durationMinutes, variationSeed));
+      setStats(calculateStats(best.route, avgSpeed, input.durationMinutes, variationSeed));
     } catch {
       setRouteError("Could not build a route. Try increasing the duration or changing the route type.");
     } finally {
@@ -458,7 +481,7 @@ export default function Page() {
                 ) : null}
               </CardHeader>
               <CardContent className="h-[calc(100%-64px)] p-0">
-                <RouteMap dealershipLatLng={dealershipLatLng} directions={directions} />
+                <RouteMap dealershipLatLng={dealershipLatLng} routePath={routePath} />
               </CardContent>
             </Card>
           </div>

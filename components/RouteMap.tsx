@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Map, Marker, useMap } from "@vis.gl/react-google-maps";
+import { Map, useMap } from "@vis.gl/react-google-maps";
 import type { LatLng } from "@/types/route";
 
 type RouteMapProps = {
   dealershipLatLng: LatLng | null;
-  directions: google.maps.DirectionsResult | null;
+  routePath: LatLng[];
 };
 
 const LIGHT_MONOCHROME_STYLE: google.maps.MapTypeStyle[] = [
@@ -27,35 +27,65 @@ const DARK_MONOCHROME_STYLE: google.maps.MapTypeStyle[] = [
   { featureType: "water", elementType: "geometry", stylers: [{ color: "#0f172a" }] },
 ];
 
-function DirectionsLayer({ directions }: { directions: google.maps.DirectionsResult | null }) {
+function DirectionsLayer({
+  routePath,
+  dealershipLatLng,
+}: {
+  routePath: LatLng[];
+  dealershipLatLng: LatLng | null;
+}) {
   const map = useMap();
-  const rendererRef = useRef<google.maps.DirectionsRenderer | null>(null);
+  const polylineRef = useRef<google.maps.Polyline | null>(null);
+  const centerCircleRef = useRef<google.maps.Circle | null>(null);
 
   useEffect(() => {
     if (!map) return;
-    rendererRef.current = new google.maps.DirectionsRenderer({
-      suppressMarkers: true,
-      polylineOptions: {
-        strokeColor: "#16a34a",
-        strokeOpacity: 0.95,
-        strokeWeight: 5,
-      },
+    polylineRef.current = new google.maps.Polyline({
+      strokeColor: "#16a34a",
+      strokeOpacity: 0.95,
+      strokeWeight: 5,
     });
-    rendererRef.current.setMap(map);
+    polylineRef.current.setMap(map);
+    centerCircleRef.current = new google.maps.Circle({
+      strokeColor: "#111827",
+      strokeOpacity: 0.9,
+      strokeWeight: 1.5,
+      fillColor: "#111827",
+      fillOpacity: 0.8,
+      radius: 12,
+    });
+    centerCircleRef.current.setMap(map);
 
-    return () => rendererRef.current?.setMap(null);
+    return () => {
+      polylineRef.current?.setMap(null);
+      centerCircleRef.current?.setMap(null);
+    };
   }, [map]);
 
   useEffect(() => {
-    if (!map || !rendererRef.current || !directions) return;
-    rendererRef.current.setDirections(directions);
-    map.fitBounds(directions.routes[0].bounds);
-  }, [directions, map]);
+    if (!map || !polylineRef.current) return;
+    if (centerCircleRef.current) {
+      if (dealershipLatLng) {
+        centerCircleRef.current.setCenter(dealershipLatLng);
+      } else {
+        centerCircleRef.current.setCenter(null);
+      }
+    }
+    if (routePath.length === 0) {
+      polylineRef.current.setPath([]);
+      return;
+    }
+    polylineRef.current.setPath(routePath);
+    const bounds = new google.maps.LatLngBounds();
+    routePath.forEach((p) => bounds.extend(p));
+    if (dealershipLatLng) bounds.extend(dealershipLatLng);
+    map.fitBounds(bounds);
+  }, [routePath, dealershipLatLng, map]);
 
   return null;
 }
 
-export function RouteMap({ dealershipLatLng, directions }: RouteMapProps) {
+export function RouteMap({ dealershipLatLng, routePath }: RouteMapProps) {
   const center = dealershipLatLng ?? { lat: 40.7128, lng: -74.006 };
   const [dark, setDark] = useState(true);
 
@@ -91,8 +121,7 @@ export function RouteMap({ dealershipLatLng, directions }: RouteMapProps) {
         styles={mapStyles}
         mapTypeControl={false}
       >
-        {dealershipLatLng ? <Marker position={dealershipLatLng} /> : null}
-        <DirectionsLayer directions={directions} />
+        <DirectionsLayer routePath={routePath} dealershipLatLng={dealershipLatLng} />
       </Map>
     </div>
   );
