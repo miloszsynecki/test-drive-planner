@@ -81,26 +81,32 @@ export default function Page() {
   }, [dealershipAddress, dealershipLatLng, waypoints]);
 
   const resolveWithPlaces = async (address: string): Promise<LatLng | null> => {
-    return new Promise((resolve) => {
-      const service = new google.maps.places.PlacesService(document.createElement("div"));
-      service.findPlaceFromQuery(
-        {
-          query: address,
-          fields: ["geometry"],
-        },
-        (results, status) => {
-          if (
-            status !== google.maps.places.PlacesServiceStatus.OK ||
-            !results?.[0]?.geometry?.location
-          ) {
-            resolve(null);
-            return;
-          }
-          const location = results[0].geometry.location;
-          resolve({ lat: location.lat(), lng: location.lng() });
-        },
-      );
-    });
+    const places = window.google.maps.places as unknown as {
+      AutocompleteSuggestion?: {
+        fetchAutocompleteSuggestions: (
+          request: unknown,
+        ) => Promise<{ suggestions?: Array<{ placePrediction?: { toPlace?: () => { fetchFields?: (input: unknown) => Promise<void>; location?: { lat: () => number; lng: () => number } } } }> }>;
+      };
+      AutocompleteSessionToken?: new () => google.maps.places.AutocompleteSessionToken;
+    };
+
+    if (!places.AutocompleteSuggestion) return null;
+
+    try {
+      const token = places.AutocompleteSessionToken ? new places.AutocompleteSessionToken() : undefined;
+      const response = await places.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+        input: address,
+        sessionToken: token,
+      });
+      const firstPrediction = response.suggestions?.[0]?.placePrediction;
+      const place = firstPrediction?.toPlace?.();
+      if (!place?.fetchFields) return null;
+      await place.fetchFields({ fields: ["location"] });
+      if (!place.location) return null;
+      return { lat: place.location.lat(), lng: place.location.lng() };
+    } catch {
+      return null;
+    }
   };
 
   const getDurationMinutes = (result: google.maps.DirectionsResult): number =>

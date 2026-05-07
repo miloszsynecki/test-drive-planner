@@ -13,21 +13,13 @@ type AddressInputProps = {
 };
 
 export function AddressInput({ value, onChange, onSelect, error }: AddressInputProps) {
-  const [predictions, setPredictions] = useState<google.maps.places.AutocompletePrediction[]>([]);
+  const [predictions, setPredictions] = useState<Array<{ id: string; label: string; raw: unknown }>>([]);
   const [open, setOpen] = useState(false);
-  const autocompleteServiceRef = useRef<google.maps.places.AutocompleteService | null>(null);
-  const placesServiceRef = useRef<google.maps.places.PlacesService | null>(null);
   const sessionTokenRef = useRef<google.maps.places.AutocompleteSessionToken | null>(null);
 
   useEffect(() => {
-    if (!window.google?.maps?.places) return;
-    autocompleteServiceRef.current = new google.maps.places.AutocompleteService();
-    placesServiceRef.current = new google.maps.places.PlacesService(document.createElement("div"));
-  }, []);
-
-  useEffect(() => {
-    if (!autocompleteServiceRef.current || value.trim().length < 3) {
-      setPredictions([]);
+    if (!window.google?.maps?.places || value.trim().length < 3) {
+      Promise.resolve().then(() => setPredictions([]));
       return;
     }
 
@@ -36,44 +28,57 @@ export function AddressInput({ value, onChange, onSelect, error }: AddressInputP
     }
 
     const timeout = setTimeout(() => {
-      autocompleteServiceRef.current?.getPlacePredictions(
-        {
-          input: value,
-          sessionToken: sessionTokenRef.current ?? undefined,
-        },
-        (result) => {
-          setPredictions(result ?? []);
+      const places = window.google.maps.places as unknown as {
+        AutocompleteSuggestion?: {
+          fetchAutocompleteSuggestions: (
+            request: unknown,
+          ) => Promise<{ suggestions?: Array<{ placePrediction?: { placeId?: string; text?: { text?: string } } }> }>;
+        };
+      };
+
+      places.AutocompleteSuggestion?.fetchAutocompleteSuggestions({
+        input: value,
+        sessionToken: sessionTokenRef.current ?? undefined,
+      })
+        .then((response) => {
+          const next = (response.suggestions ?? [])
+            .map((suggestion) => {
+              const prediction = suggestion.placePrediction;
+              const id = prediction?.placeId ?? "";
+              const label = prediction?.text?.text ?? "";
+              if (!id || !label) return null;
+              return { id, label, raw: suggestion };
+            })
+            .filter((item): item is { id: string; label: string; raw: unknown } => Boolean(item));
+          setPredictions(next);
           setOpen(true);
-        },
-      );
+        })
+        .catch(() => setPredictions([]));
     }, 300);
 
     return () => clearTimeout(timeout);
   }, [value]);
 
-  const selectPrediction = (prediction: google.maps.places.AutocompletePrediction) => {
-    const service = placesServiceRef.current;
-    if (!service) return;
+  const selectPrediction = async (prediction: { id: string; label: string; raw: unknown }) => {
+    const placePrediction = (prediction.raw as { placePrediction?: { toPlace?: () => { fetchFields?: (input: unknown) => Promise<void>; formattedAddress?: string; location?: { lat: () => number; lng: () => number } } } }).placePrediction;
+    const place = placePrediction?.toPlace?.();
+    if (!place?.fetchFields) return;
 
-    service.getDetails(
-      {
-        placeId: prediction.place_id,
-        fields: ["formatted_address", "geometry"],
-        sessionToken: sessionTokenRef.current ?? undefined,
-      },
-      (place) => {
-        if (!place?.geometry?.location || !place.formatted_address) return;
-        const latLng = {
-          lat: place.geometry.location.lat(),
-          lng: place.geometry.location.lng(),
-        };
-        onChange(place.formatted_address);
-        onSelect(place.formatted_address, latLng);
-        setOpen(false);
-        setPredictions([]);
-        sessionTokenRef.current = null;
-      },
-    );
+    try {
+      await place.fetchFields({ fields: ["formattedAddress", "location"] });
+      if (!place.location || !place.formattedAddress) return;
+      const latLng = {
+        lat: place.location.lat(),
+        lng: place.location.lng(),
+      };
+      onChange(place.formattedAddress);
+      onSelect(place.formattedAddress, latLng);
+      setOpen(false);
+      setPredictions([]);
+      sessionTokenRef.current = null;
+    } catch {
+      // Keep current state; user can retry selection.
+    }
   };
 
   return (
@@ -88,12 +93,12 @@ export function AddressInput({ value, onChange, onSelect, error }: AddressInputP
         <div className="absolute z-40 mt-1 w-full rounded-md border bg-card p-1 shadow-lg">
           {predictions.map((prediction) => (
             <button
-              key={prediction.place_id}
+              key={prediction.id}
               className="w-full rounded px-3 py-2 text-left text-sm hover:bg-muted"
               type="button"
               onClick={() => selectPrediction(prediction)}
             >
-              {prediction.description}
+              {prediction.label}
             </button>
           ))}
         </div>
