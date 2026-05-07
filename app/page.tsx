@@ -433,7 +433,7 @@ export default function Page() {
                   <CardTitle className="text-base">Export</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <ExportButtons googleMapsUrl={exports.googleMapsUrl} wazeUrl={exports.wazeUrl} />
+                  <ExportButtons googleMapsUrl={exports.googleMapsUrl} />
                 </CardContent>
               </Card>
             ) : null}

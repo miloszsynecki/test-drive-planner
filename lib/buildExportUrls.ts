@@ -2,9 +2,9 @@ import type { LatLng } from "@/types/route";
 
 export function buildExportUrls(
   dealershipAddress: string,
-  dealershipLatLng: LatLng,
+  _dealershipLatLng: LatLng,
   waypoints: LatLng[],
-): { googleMapsUrl: string; wazeUrl: string } {
+): { googleMapsUrl: string } {
   const encodedAddress = encodeURIComponent(dealershipAddress);
   const waypointString = waypoints.map((w) => `${w.lat},${w.lng}`).join("|");
 
@@ -14,7 +14,5 @@ export function buildExportUrls(
     `&waypoints=${encodeURIComponent(waypointString)}` +
     "&travelmode=driving";
 
-  const wazeUrl = `https://waze.com/ul?ll=${dealershipLatLng.lat},${dealershipLatLng.lng}&navigate=yes`;
-
-  return { googleMapsUrl, wazeUrl };
+  return { googleMapsUrl };
 }

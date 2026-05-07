@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Map, Marker, useMap } from "@vis.gl/react-google-maps";
 import type { LatLng } from "@/types/route";
 
@@ -9,13 +9,22 @@ type RouteMapProps = {
   directions: google.maps.DirectionsResult | null;
 };
 
-const MONOCHROME_STYLE: google.maps.MapTypeStyle[] = [
+const LIGHT_MONOCHROME_STYLE: google.maps.MapTypeStyle[] = [
   { elementType: "geometry", stylers: [{ color: "#f5f5f5" }] },
   { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
   { elementType: "labels.text.fill", stylers: [{ color: "#666666" }] },
   { elementType: "labels.text.stroke", stylers: [{ color: "#f5f5f5" }] },
   { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
   { featureType: "water", elementType: "geometry", stylers: [{ color: "#dddddd" }] },
+];
+
+const DARK_MONOCHROME_STYLE: google.maps.MapTypeStyle[] = [
+  { elementType: "geometry", stylers: [{ color: "#111827" }] },
+  { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#9ca3af" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#111827" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#1f2937" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#0f172a" }] },
 ];
 
 function DirectionsLayer({ directions }: { directions: google.maps.DirectionsResult | null }) {
@@ -48,6 +57,30 @@ function DirectionsLayer({ directions }: { directions: google.maps.DirectionsRes
 
 export function RouteMap({ dealershipLatLng, directions }: RouteMapProps) {
   const center = dealershipLatLng ?? { lat: 40.7128, lng: -74.006 };
+  const [dark, setDark] = useState(true);
+
+  useEffect(() => {
+    const syncTheme = () => {
+      const isDark =
+        document.documentElement.classList.contains("dark") ||
+        document.documentElement.getAttribute("data-theme") === "dark";
+      setDark(isDark);
+    };
+
+    syncTheme();
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "data-theme"],
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  const mapStyles = useMemo(
+    () => (dark ? DARK_MONOCHROME_STYLE : LIGHT_MONOCHROME_STYLE),
+    [dark],
+  );
 
   return (
     <div className="h-full w-full overflow-hidden">
@@ -55,7 +88,8 @@ export function RouteMap({ dealershipLatLng, directions }: RouteMapProps) {
         defaultZoom={12}
         defaultCenter={center}
         gestureHandling="greedy"
-        styles={MONOCHROME_STYLE}
+        styles={mapStyles}
+        mapTypeControl={false}
       >
         {dealershipLatLng ? <Marker position={dealershipLatLng} /> : null}
         <DirectionsLayer directions={directions} />
