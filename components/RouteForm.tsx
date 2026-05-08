@@ -11,6 +11,7 @@ import type { LatLng, RouteCharacter } from "@/types/route";
 
 type RouteFormProps = {
   loading: boolean;
+  loadingMessage?: string;
   onSubmit: (input: {
     address: string;
     latLng: LatLng | null;
@@ -19,7 +20,7 @@ type RouteFormProps = {
   }) => Promise<void> | void;
 };
 
-export function RouteForm({ loading, onSubmit }: RouteFormProps) {
+export function RouteForm({ loading, loadingMessage, onSubmit }: RouteFormProps) {
   const [address, setAddress] = useState("");
   const [selectedLatLng, setSelectedLatLng] = useState<LatLng | null>(null);
   const [durationMinutes, setDurationMinutes] = useState("20");
@@ -87,8 +88,13 @@ export function RouteForm({ loading, onSubmit }: RouteFormProps) {
             </Select>
           </div>
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Finding best route...</> : "Generate Route"}
+            {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{loadingMessage ?? "Finding best route..."}</> : "Generate Route"}
           </Button>
+          {loading ? (
+            <p className="text-xs text-muted-foreground">
+              We are evaluating multiple loop options to improve route quality.
+            </p>
+          ) : null}
         </form>
       </CardContent>
     </Card>

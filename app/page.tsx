@@ -13,56 +13,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { buildExportUrls } from "@/lib/buildExportUrls";
 import { generateWaypoints, getAvgSpeed } from "@/lib/generateWaypoints";
+import { createGoogleRouteProvider } from "@/lib/googleRoutesProvider";
+import { toUserRouteError } from "@/lib/routeErrors";
+import { DEFAULT_PLANNER_CONFIG, planRoute } from "@/lib/routePlanner";
+import {
+  getDurationMinutes,
+  getLegs,
+  getOverlapRatio,
+  getPathFromRoute,
+  getUTurnCount,
+} from "@/lib/routeMetrics";
 import type { GeneratedRouteStats, LatLng, RouteCharacter } from "@/types/route";
 
 const RouteMap = dynamic(
   () => import("@/components/RouteMap").then((m) => m.RouteMap),
   { ssr: false },
 );
-
-type PlannerConfig = {
-  durationTolerancePrimary: number;
-  durationToleranceFallback: number;
-  maxCandidates: {
-    short: number;
-    medium: number;
-    long: number;
-  };
-  weights: {
-    durationError: number;
-    uturn: number;
-    overlap: number;
-    deadEnd: number;
-    uniquenessPenalty: number;
-  };
-};
-
-const PLANNER_CONFIG: PlannerConfig = {
-  durationTolerancePrimary: 0.15,
-  durationToleranceFallback: 0.2,
-  maxCandidates: {
-    short: 18,
-    medium: 24,
-    long: 30,
-  },
-  weights: {
-    durationError: 3.2,
-    uturn: 1.6,
-    overlap: 4.0,
-    deadEnd: 1.2,
-    uniquenessPenalty: 2.0,
-  },
-};
-
-function randomBetween(min: number, max: number): number {
-  return Math.random() * (max - min) + min;
-}
-
-function getTier(durationMinutes: number): "short" | "medium" | "long" {
-  if (durationMinutes <= 20) return "short";
-  if (durationMinutes <= 45) return "medium";
-  return "long";
-}
 
 export default function Page() {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
@@ -73,6 +39,8 @@ export default function Page() {
   const [waypoints, setWaypoints] = useState<LatLng[]>([]);
   const [stats, setStats] = useState<GeneratedRouteStats | null>(null);
   const [routeError, setRouteError] = useState("");
+  const [routeNotice, setRouteNotice] = useState("");
+  const [loadingMessage, setLoadingMessage] = useState("Finding best route...");
   const recentFingerprintsRef = useRef<string[]>([]);
 
   const exports = useMemo(() => {
@@ -109,80 +77,13 @@ export default function Page() {
     }
   };
 
-  const getPathFromRoute = (route: unknown): LatLng[] => {
-    const rawPath = (route as { path?: Array<{ lat?: number | (() => number); lng?: number | (() => number) }> }).path ?? [];
-    return rawPath
-      .map((point) => {
-        const lat = typeof point.lat === "function" ? point.lat() : point.lat;
-        const lng = typeof point.lng === "function" ? point.lng() : point.lng;
-        if (typeof lat !== "number" || typeof lng !== "number") return null;
-        return { lat, lng };
-      })
-      .filter((p): p is LatLng => Boolean(p));
-  };
-
-  const getLegs = (route: unknown): Array<{ distanceMeters?: number; durationMillis?: number; steps?: Array<{ navigationInstruction?: { instructions?: string } }> }> =>
-    ((route as { legs?: Array<{ distanceMeters?: number; durationMillis?: number; steps?: Array<{ navigationInstruction?: { instructions?: string } }> }> }).legs ?? []);
-
-  const getDurationMinutes = (route: unknown): number => {
-    const totalMillis = getLegs(route).reduce((sum, leg) => sum + Number(leg.durationMillis ?? 0), 0);
-    return totalMillis / 1000 / 60;
-  };
-
-  const getUTurnCount = (route: unknown): number => {
-    const steps = getLegs(route).flatMap((leg) => leg.steps ?? []);
-    return steps.filter((step) =>
-      (step.navigationInstruction?.instructions ?? "").toLowerCase().includes("u-turn"),
-    ).length;
-  };
-
-  const getOverlapRatio = (route: unknown): number => {
-    const path = getPathFromRoute(route);
-    const visited = new Set<string>();
-    let repeated = 0;
-    for (const p of path) {
-      const key = `${p.lat.toFixed(4)}:${p.lng.toFixed(4)}`;
-      if (visited.has(key)) repeated += 1;
-      visited.add(key);
-    }
-    return path.length > 0 ? repeated / path.length : 0;
-  };
-
-  const getDeadEndProxy = (route: unknown): number => {
-    const steps = getLegs(route).flatMap((leg) => leg.steps ?? []);
-    let count = 0;
-    for (let i = 1; i < steps.length; i += 1) {
-      const prev = steps[i - 1];
-      const curr = steps[i];
-      const prevInstruction = (prev.navigationInstruction?.instructions ?? "").toLowerCase();
-      const currInstruction = (curr.navigationInstruction?.instructions ?? "").toLowerCase();
-      const shortOutAndBack =
-        prevInstruction.includes("turn") &&
-        currInstruction.includes("turn");
-      if (shortOutAndBack) count += 1;
-    }
-    return count;
-  };
-
-  const makeFingerprint = (route: unknown): string => {
-    const path = getPathFromRoute(route);
-    return path
-      .filter((_, idx) => idx % 4 === 0)
-      .map((p) => `${p.lat.toFixed(3)}:${p.lng.toFixed(3)}`)
-      .join("|");
-  };
-
-  const uniquenessPenalty = (fingerprint: string): number => {
-    if (recentFingerprintsRef.current.length === 0) return 0;
-    const exact = recentFingerprintsRef.current.includes(fingerprint);
-    return exact ? 1 : 0;
-  };
-
   const calculateStats = (
     route: unknown,
     avgSpeedKmh: number,
     requestedMinutes: number,
     variationSeed: number,
+    fallbackLevel: "strict-via" | "sparse-via" | "sparse-stopover",
+    usedUTurnFallback: boolean,
   ): GeneratedRouteStats => {
     const legs = getLegs(route);
     const totalMeters = legs.reduce((sum, leg) => sum + Number(leg.distanceMeters ?? 0), 0);
@@ -197,6 +98,8 @@ export default function Page() {
       uturnCount: getUTurnCount(route),
       overlapRatio: getOverlapRatio(route),
       variationSeed,
+      fallbackLevel,
+      usedUTurnFallback,
     };
   };
 
@@ -208,6 +111,8 @@ export default function Page() {
   }) => {
     setLoading(true);
     setRouteError("");
+    setRouteNotice("");
+    setLoadingMessage("Resolving address...");
 
     try {
       if (!window.google?.maps) throw new Error("Google Maps not loaded");
@@ -219,133 +124,26 @@ export default function Page() {
       const resolvedLatLng = input.latLng ?? (await resolveWithPlaces(input.address));
       if (!resolvedLatLng) throw new Error("Address not found");
 
-      const tier = getTier(input.durationMinutes);
-      const maxCandidates = PLANNER_CONFIG.maxCandidates[tier];
-      const baseWaypointCount = tier === "short" ? 6 : tier === "medium" ? 8 : 10;
       const avgSpeed = getAvgSpeed(input.routeCharacter);
       const variationSeed = Math.floor(Math.random() * 1000000);
 
-      const routeWithWaypoints = async (
-        allWaypoints: LatLng[],
-        stopover: boolean,
-      ): Promise<unknown> => {
-        const response = await routesLib.Route.computeRoutes({
-          origin: resolvedLatLng,
-          destination: resolvedLatLng,
-          travelMode: google.maps.TravelMode.DRIVING,
-          intermediates: allWaypoints.map((point) => ({ location: point, via: !stopover })),
-          fields: ["path", "legs"],
-        });
-        const route = response.routes?.[0];
-        if (!route) throw new Error("No route");
-        return route;
-      };
+      const provider = createGoogleRouteProvider(routesLib, resolvedLatLng);
+      setLoadingMessage("Generating loop options...");
 
-      const candidates: Array<{
-        route: unknown;
-        generatedWaypoints: LatLng[];
-        score: number;
-        durationError: number;
-        uturnCount: number;
-        overlapRatio: number;
-        radiusScale: number;
-        waypointCount: number;
-        angle: number;
-        ellipseRatio: number;
-        stopover: boolean;
-      }> = [];
+      const selection = await planRoute({
+        origin: resolvedLatLng,
+        durationMinutes: input.durationMinutes,
+        routeCharacter: input.routeCharacter,
+        config: DEFAULT_PLANNER_CONFIG,
+        recentFingerprints: recentFingerprintsRef.current,
+        computeRoute: provider.computeRoute,
+        onProgress: (message) => setLoadingMessage(message),
+      });
+      let best = selection.best;
+      const usedUTurnFallback = selection.usedUTurnFallback;
 
-      for (let i = 0; i < maxCandidates; i += 1) {
-        const waypointCount = Math.max(4, baseWaypointCount + Math.round(randomBetween(-2, 2)));
-        const radiusScale = randomBetween(0.72, 1.26);
-        const angle = randomBetween(0, 360);
-        const ellipseRatio = randomBetween(0.82, 1.18);
-        const generatedWaypoints = generateWaypoints(
-          resolvedLatLng,
-          input.durationMinutes,
-          input.routeCharacter,
-          radiusScale,
-          waypointCount,
-          angle,
-          ellipseRatio,
-        );
-
-        const patterns: Array<{ waypoints: LatLng[]; stopover: boolean }> = [
-          { waypoints: generatedWaypoints, stopover: false },
-          { waypoints: generatedWaypoints.filter((_, idx) => idx % 2 === 0), stopover: false },
-          { waypoints: generatedWaypoints.filter((_, idx) => idx % 2 === 0), stopover: true },
-        ];
-
-        for (const pattern of patterns) {
-          try {
-            const result = await routeWithWaypoints(pattern.waypoints, pattern.stopover);
-            const durationError =
-              Math.abs(getDurationMinutes(result) - input.durationMinutes) / input.durationMinutes;
-            const uturnCount = getUTurnCount(result);
-            const overlapRatio = getOverlapRatio(result);
-            const deadEndCount = getDeadEndProxy(result);
-            const fingerprint = makeFingerprint(result);
-            const uniquePenalty = uniquenessPenalty(fingerprint);
-
-            const score =
-              durationError * PLANNER_CONFIG.weights.durationError +
-              uturnCount * PLANNER_CONFIG.weights.uturn +
-              overlapRatio * PLANNER_CONFIG.weights.overlap +
-              deadEndCount * PLANNER_CONFIG.weights.deadEnd +
-              uniquePenalty * PLANNER_CONFIG.weights.uniquenessPenalty;
-
-            candidates.push({
-              route: result,
-              generatedWaypoints: pattern.waypoints,
-              score,
-              durationError,
-              uturnCount,
-              overlapRatio,
-              radiusScale,
-              waypointCount,
-              angle,
-              ellipseRatio,
-              stopover: pattern.stopover,
-            });
-
-            if (
-              durationError <= PLANNER_CONFIG.durationTolerancePrimary &&
-              uturnCount === 0 &&
-              overlapRatio <= 0.12 &&
-              deadEndCount <= 1 &&
-              uniquePenalty === 0
-            ) {
-              i = maxCandidates;
-              break;
-            }
-          } catch {
-            // Continue with next candidate.
-          }
-        }
-      }
-
-      if (candidates.length === 0) throw new Error("No route candidates");
-
-      const inPrimaryBand = candidates.filter(
-        (c) => c.durationError <= PLANNER_CONFIG.durationTolerancePrimary,
-      );
-      const inFallbackBand = candidates.filter(
-        (c) => c.durationError <= PLANNER_CONFIG.durationToleranceFallback,
-      );
-
-      const basePool =
-        inPrimaryBand.length > 0
-          ? inPrimaryBand
-          : inFallbackBand.length > 0
-            ? inFallbackBand
-            : candidates;
-      const noUTurn = basePool.filter((c) => c.uturnCount === 0);
-      const lowOverlapNoUTurn = noUTurn.filter((c) => c.overlapRatio <= 0.18);
-      const pool = lowOverlapNoUTurn.length > 0 ? lowOverlapNoUTurn : noUTurn.length > 0 ? noUTurn : basePool;
-      pool.sort((a, b) => a.score - b.score);
-      let best = pool[0];
-
-      if (best.durationError > PLANNER_CONFIG.durationToleranceFallback) {
+      if (best.durationError > DEFAULT_PLANNER_CONFIG.durationToleranceFallback) {
+        setLoadingMessage("Tuning route duration...");
         const actualMinutes = getDurationMinutes(best.route);
         if (actualMinutes > 0) {
           const adjustedRadiusScale =
@@ -360,14 +158,15 @@ export default function Page() {
             best.ellipseRatio,
           );
           try {
-            const adjustedResult = await routeWithWaypoints(
+            const adjustedResult = await provider.computeRoute(
               best.stopover ? adjustedWaypoints.filter((_, idx) => idx % 2 === 0) : adjustedWaypoints,
               best.stopover,
             );
             const adjustedDurationError =
               Math.abs(getDurationMinutes(adjustedResult) - input.durationMinutes) /
               input.durationMinutes;
-            if (adjustedDurationError < best.durationError) {
+            const adjustedUTurnCount = getUTurnCount(adjustedResult);
+            if (adjustedDurationError < best.durationError && adjustedUTurnCount === 0) {
               best = {
                 ...best,
                 route: adjustedResult,
@@ -375,6 +174,8 @@ export default function Page() {
                   ? adjustedWaypoints.filter((_, idx) => idx % 2 === 0)
                   : adjustedWaypoints,
                 durationError: adjustedDurationError,
+                fallbackLevel: best.stopover ? "sparse-stopover" : "strict-via",
+                uturnCount: adjustedUTurnCount,
               };
             }
           } catch {
@@ -383,7 +184,7 @@ export default function Page() {
         }
       }
 
-      const fingerprint = makeFingerprint(best.route);
+      const fingerprint = selection.bestFingerprint;
       recentFingerprintsRef.current = [
         fingerprint,
         ...recentFingerprintsRef.current.filter((f) => f !== fingerprint),
@@ -393,10 +194,24 @@ export default function Page() {
       setDealershipAddress(input.address);
       setDealershipLatLng(resolvedLatLng);
       setWaypoints(best.generatedWaypoints);
-      setStats(calculateStats(best.route, avgSpeed, input.durationMinutes, variationSeed));
-    } catch {
-      setRouteError("Could not build a route. Try increasing the duration or changing the route type.");
+      setStats(
+        calculateStats(
+          best.route,
+          avgSpeed,
+          input.durationMinutes,
+          variationSeed,
+          best.fallbackLevel,
+          usedUTurnFallback,
+        ),
+      );
+      if (usedUTurnFallback) {
+        setRouteNotice("No U-turn-free route was found. Showing the best available route with minimal U-turns.");
+      }
+    } catch (error) {
+      setRouteNotice("");
+      setRouteError(toUserRouteError(error));
     } finally {
+      setLoadingMessage("Finding best route...");
       setLoading(false);
     }
   };
@@ -435,6 +250,12 @@ export default function Page() {
                 <AlertDescription>{routeError}</AlertDescription>
               </Alert>
             ) : null}
+            {!routeError && routeNotice ? (
+              <Alert>
+                <AlertTitle>Route quality notice</AlertTitle>
+                <AlertDescription>{routeNotice}</AlertDescription>
+              </Alert>
+            ) : null}
 
             <Card>
               <CardHeader>
@@ -447,7 +268,7 @@ export default function Page() {
               </CardContent>
             </Card>
 
-            <RouteForm loading={loading} onSubmit={generateRoute} />
+            <RouteForm loading={loading} loadingMessage={loadingMessage} onSubmit={generateRoute} />
 
             {stats ? (
               <>

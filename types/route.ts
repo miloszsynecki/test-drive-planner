@@ -14,4 +14,6 @@ export type GeneratedRouteStats = {
   uturnCount: number;
   overlapRatio: number;
   variationSeed: number;
+  fallbackLevel: "strict-via" | "sparse-via" | "sparse-stopover";
+  usedUTurnFallback: boolean;
 };
