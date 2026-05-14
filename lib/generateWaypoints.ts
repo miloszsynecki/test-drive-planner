@@ -24,8 +24,7 @@ export function generateWaypoints(
   const estimatedDistanceKm = (durationMinutes / 60) * avgSpeed;
   const radiusKm = (estimatedDistanceKm / (2 * Math.PI)) * radiusScale;
   const centerLatRad = (center.lat * Math.PI) / 180;
-  const waypointCount =
-    waypointCountOverride ?? (durationMinutes <= 20 ? 6 : durationMinutes <= 45 ? 8 : 10);
+  const waypointCount = waypointCountOverride ?? 3;
   const startAngleDeg = startAngleDegOverride ?? 22.5;
   const angleStepDeg = 360 / waypointCount;
   const angles = Array.from(

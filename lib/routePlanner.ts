@@ -31,13 +31,13 @@ export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
   durationTolerancePrimary: 0.15,
   durationToleranceFallback: 0.2,
   maxCandidates: {
-    short: 18,
-    medium: 24,
-    long: 30,
+    short: 6,
+    medium: 8,
+    long: 10,
   },
   weights: {
-    durationError: 3.2,
-    uturn: 1.6,
+    durationError: 4.0,
+    uturn: 0.8,
     overlap: 4.0,
     deadEnd: 1.2,
     uniquenessPenalty: 2.0,
@@ -65,7 +65,7 @@ type PlanRouteInput = {
   routeCharacter: RouteCharacter;
   config?: PlannerConfig;
   recentFingerprints: string[];
-  computeRoute: (waypoints: LatLng[], stopover: boolean) => Promise<unknown>;
+  computeRoute: (waypoints: LatLng[]) => Promise<unknown>;
   onProgress?: (message: string) => void;
 };
 
@@ -94,7 +94,7 @@ export async function planRoute(input: PlanRouteInput): Promise<PlanRouteResult>
   const config = input.config ?? DEFAULT_PLANNER_CONFIG;
   const tier = getTier(input.durationMinutes);
   const maxCandidates = config.maxCandidates[tier];
-  const baseWaypointCount = tier === "short" ? 6 : tier === "medium" ? 8 : 10;
+  const baseWaypointCount = 3;
 
   const candidates: RouteCandidate[] = [];
 
@@ -121,7 +121,7 @@ export async function planRoute(input: PlanRouteInput): Promise<PlanRouteResult>
     const patterns = createRoutePatterns(waypointPipeline.waypoints);
     for (const pattern of patterns) {
       try {
-        const result = await input.computeRoute(pattern.waypoints, pattern.stopover);
+        const result = await input.computeRoute(pattern.waypoints);
         const durationError =
           Math.abs(getDurationMinutes(result) - input.durationMinutes) / input.durationMinutes;
         const uturnCount = getUTurnCount(result);
