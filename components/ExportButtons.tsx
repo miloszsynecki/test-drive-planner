@@ -1,45 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { MapPin, Zap, Copy, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 type ExportButtonsProps = {
   googleMapsUrl: string;
   wazeUrl: string;
 };
-
-function MapPinIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M10 1.5C7 1.5 4.5 4 4.5 7c0 4.5 5.5 11 5.5 11s5.5-6.5 5.5-11c0-3-2.5-5.5-5.5-5.5Z" />
-      <circle cx="10" cy="7" r="1.8" />
-    </svg>
-  );
-}
-
-function BoltIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M11.5 2L4 11h6l-1.5 7 7.5-9h-6L11.5 2Z" />
-    </svg>
-  );
-}
-
-function CopyIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="7" y="7" width="10" height="10" rx="2" />
-      <path d="M3 13V4a1 1 0 0 1 1-1h9" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 10l4.5 4.5L16 6" />
-    </svg>
-  );
-}
 
 export function ExportButtons({ googleMapsUrl, wazeUrl }: ExportButtonsProps) {
   const [copied, setCopied] = useState(false);
@@ -50,51 +19,44 @@ export function ExportButtons({ googleMapsUrl, wazeUrl }: ExportButtonsProps) {
       await navigator.clipboard.writeText(googleMapsUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard unavailable
-    }
+    } catch { /* clipboard unavailable */ }
   };
 
   return (
-    <div className="export-row">
+    <div className="flex flex-col gap-2">
       {isValidUrl ? (
-        <a
-          href={googleMapsUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="tdp-btn tdp-btn-primary export-btn"
-        >
-          <MapPinIcon />
-          <span className="export-label">Open in Google Maps</span>
-          <span className="export-tail">↗</span>
-        </a>
+        <Button asChild className="justify-start gap-2.5">
+          <a href={googleMapsUrl} target="_blank" rel="noreferrer">
+            <MapPin className="h-4 w-4 shrink-0" />
+            <span className="flex-1 text-left">Open in Google Maps</span>
+            <span className="text-xs opacity-50">↗</span>
+          </a>
+        </Button>
       ) : (
-        <button className="tdp-btn tdp-btn-primary export-btn" disabled>
-          <MapPinIcon />
-          <span className="export-label">Open in Google Maps</span>
-        </button>
+        <Button className="justify-start gap-2.5" disabled>
+          <MapPin className="h-4 w-4 shrink-0" />
+          <span className="flex-1 text-left">Open in Google Maps</span>
+        </Button>
       )}
 
-      <a
-        href={wazeUrl}
-        target="_blank"
-        rel="noreferrer"
-        className="tdp-btn tdp-btn-secondary export-btn"
-      >
-        <BoltIcon />
-        <span className="export-label">Open in Waze</span>
-        <span className="export-tail">↗</span>
-      </a>
+      <Button asChild variant="secondary" className="justify-start gap-2.5">
+        <a href={wazeUrl} target="_blank" rel="noreferrer">
+          <Zap className="h-4 w-4 shrink-0" />
+          <span className="flex-1 text-left">Open in Waze</span>
+          <span className="text-xs opacity-50">↗</span>
+        </a>
+      </Button>
 
-      <button
-        className={`tdp-btn ${copied ? "tdp-btn-success" : "tdp-btn-ghost"} export-btn`}
+      <Button
+        variant={copied ? "success" : "ghost"}
+        className={cn("justify-start gap-2.5")}
         disabled={!isValidUrl}
         onClick={handleCopy}
       >
-        {copied ? <CheckIcon /> : <CopyIcon />}
-        <span className="export-label">{copied ? "Copied ✓" : "Copy Link"}</span>
-        {!copied && <span className="export-tail">⌘L</span>}
-      </button>
+        {copied ? <Check className="h-4 w-4 shrink-0" /> : <Copy className="h-4 w-4 shrink-0" />}
+        <span className="flex-1 text-left">{copied ? "Copied ✓" : "Copy Link"}</span>
+        {!copied && <span className="font-mono text-[10.5px] opacity-40">⌘L</span>}
+      </Button>
     </div>
   );
 }
