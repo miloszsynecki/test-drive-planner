@@ -9,7 +9,7 @@ import { RouteForm } from "@/components/RouteForm";
 import { RouteStats } from "@/components/RouteStats";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { buildExportUrls } from "@/lib/buildExportUrls";
-import { generateWaypoints, getAvgSpeed } from "@/lib/generateWaypoints";
+import { getAvgSpeed } from "@/lib/generateWaypoints";
 import { createGoogleRouteProvider } from "@/lib/googleRoutesProvider";
 import { toUserRouteError } from "@/lib/routeErrors";
 import { DEFAULT_PLANNER_CONFIG, planRoute } from "@/lib/routePlanner";
@@ -138,35 +138,8 @@ export default function Page() {
         computeRoute: provider.computeRoute,
         onProgress: (message) => setLoadingMessage(message),
       });
-      let best = selection.best;
+      const best = selection.best;
       const usedUTurnFallback = selection.usedUTurnFallback;
-
-      if (best.durationError > DEFAULT_PLANNER_CONFIG.durationToleranceFallback) {
-        setLoadingMessage("Tuning route duration...");
-        const actualMinutes = getDurationMinutes(best.route);
-        if (actualMinutes > 0) {
-          const adjustedRadiusScale = best.radiusScale * (input.durationMinutes / actualMinutes);
-          const adjustedWaypoints = generateWaypoints(
-            resolvedLatLng, input.durationMinutes, input.routeCharacter,
-            adjustedRadiusScale, best.waypointCount, best.angle, best.ellipseRatio,
-          );
-          try {
-            const adjustedResult = await provider.computeRoute(adjustedWaypoints);
-            const adjustedDurationError = Math.abs(getDurationMinutes(adjustedResult) - input.durationMinutes) / input.durationMinutes;
-            const adjustedUTurnCount = getUTurnCount(adjustedResult);
-            if (adjustedDurationError < best.durationError && adjustedUTurnCount === 0) {
-              best = {
-                ...best, route: adjustedResult,
-                generatedWaypoints: adjustedWaypoints,
-                durationError: adjustedDurationError,
-                fallbackLevel: "primary-stopover",
-                uturnCount: adjustedUTurnCount,
-              };
-            }
-          } catch { /* keep original */ }
-        }
-      }
-
       const fingerprint = selection.bestFingerprint;
       recentFingerprintsRef.current = [fingerprint, ...recentFingerprintsRef.current.filter((f) => f !== fingerprint)].slice(0, 5);
 
