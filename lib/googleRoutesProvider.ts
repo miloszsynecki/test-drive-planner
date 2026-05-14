@@ -7,7 +7,7 @@ type GoogleRoutesLibrary = {
 };
 
 type RouteProvider = {
-  computeRoute: (waypoints: LatLng[], stopover: boolean) => Promise<unknown>;
+  computeRoute: (waypoints: LatLng[]) => Promise<unknown>;
 };
 
 export function createGoogleRouteProvider(
@@ -15,12 +15,12 @@ export function createGoogleRouteProvider(
   origin: LatLng,
 ): RouteProvider {
   return {
-    computeRoute: async (waypoints: LatLng[], stopover: boolean): Promise<unknown> => {
+    computeRoute: async (waypoints: LatLng[]): Promise<unknown> => {
       const requestBase = {
         origin,
         destination: origin,
         travelMode: google.maps.TravelMode.DRIVING,
-        intermediates: waypoints.map((point) => ({ location: point, via: !stopover })),
+        intermediates: waypoints.map((point) => ({ location: point, via: false })),
       };
 
       try {

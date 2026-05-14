@@ -86,7 +86,7 @@ export default function Page() {
     avgSpeedKmh: number,
     requestedMinutes: number,
     variationSeed: number,
-    fallbackLevel: "strict-via" | "sparse-via" | "sparse-stopover",
+    fallbackLevel: "primary-stopover" | "sparse-stopover",
     usedUTurnFallback: boolean,
   ): GeneratedRouteStats => {
     const legs = getLegs(route);
@@ -151,18 +151,15 @@ export default function Page() {
             adjustedRadiusScale, best.waypointCount, best.angle, best.ellipseRatio,
           );
           try {
-            const adjustedResult = await provider.computeRoute(
-              best.stopover ? adjustedWaypoints.filter((_, idx) => idx % 2 === 0) : adjustedWaypoints,
-              best.stopover,
-            );
+            const adjustedResult = await provider.computeRoute(adjustedWaypoints);
             const adjustedDurationError = Math.abs(getDurationMinutes(adjustedResult) - input.durationMinutes) / input.durationMinutes;
             const adjustedUTurnCount = getUTurnCount(adjustedResult);
             if (adjustedDurationError < best.durationError && adjustedUTurnCount === 0) {
               best = {
                 ...best, route: adjustedResult,
-                generatedWaypoints: best.stopover ? adjustedWaypoints.filter((_, idx) => idx % 2 === 0) : adjustedWaypoints,
+                generatedWaypoints: adjustedWaypoints,
                 durationError: adjustedDurationError,
-                fallbackLevel: best.stopover ? "sparse-stopover" : "strict-via",
+                fallbackLevel: "primary-stopover",
                 uturnCount: adjustedUTurnCount,
               };
             }
