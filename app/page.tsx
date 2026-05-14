@@ -7,10 +7,6 @@ import { ExportButtons } from "@/components/ExportButtons";
 import { RouteForm } from "@/components/RouteForm";
 import { RouteStats } from "@/components/RouteStats";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import { buildExportUrls } from "@/lib/buildExportUrls";
 import { generateWaypoints, getAvgSpeed } from "@/lib/generateWaypoints";
 import { createGoogleRouteProvider } from "@/lib/googleRoutesProvider";
@@ -29,6 +25,30 @@ const RouteMap = dynamic(
   () => import("@/components/RouteMap").then((m) => m.RouteMap),
   { ssr: false },
 );
+
+function CarRoadIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M4 13L4 17L20 17L20 13L18 8Q17.5 7 16.5 7L7.5 7Q6.5 7 6 8Z"
+        stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"
+      />
+      <circle cx="8" cy="17" r="1.5" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="16" cy="17" r="1.5" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M3 20L21 20" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeDasharray="2 3" />
+    </svg>
+  );
+}
+
+function AlertIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 20 20" fill="none">
+      <path d="M10 2L18.5 17H1.5L10 2Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M10 8V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="10" cy="14" r="0.75" fill="currentColor" />
+    </svg>
+  );
+}
 
 export default function Page() {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
@@ -218,96 +238,89 @@ export default function Page() {
 
   if (!apiKey) {
     return (
-      <main className="mx-auto max-w-4xl p-6">
-        <Card>
-          <CardContent className="space-y-2 p-6">
-            <h1 className="text-xl font-semibold">Missing Google Maps API key</h1>
-            <p className="text-sm text-muted-foreground">
-              Create `.env.local` with `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_key` and restart `npm run dev`.
+      <div className="app-shell">
+        <div className="left-panel">
+          <div className="app-head">
+            <div className="app-mark"><CarRoadIcon /></div>
+            <div className="app-title-wrap">
+              <div className="app-title">Test Drive · Route Planner</div>
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-head"><span className="card-label">Configuration required</span></div>
+            <p style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.6 }}>
+              Create <code style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--accent)" }}>.env.local</code> with{" "}
+              <code style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text)" }}>NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_key</code> and restart the dev server.
             </p>
-          </CardContent>
-        </Card>
-      </main>
+          </div>
+        </div>
+        <div className="right-panel" />
+      </div>
     );
   }
 
+  const footerStatus = loading ? loadingMessage : stats ? "Route ready" : "Idle";
+
   return (
     <APIProvider apiKey={apiKey} libraries={["places"]}>
-      <main className="h-dvh w-full overflow-hidden">
-        <header className="flex flex-col justify-between gap-2 border-b bg-card/80 px-3 py-3 sm:flex-row sm:items-center sm:px-4">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Test Drive Route Planner</h1>
-            <p className="text-sm text-muted-foreground">Generate smooth, varied dealership loop routes in one click.</p>
+      <div className="app-shell">
+        {/* ── Left panel ── */}
+        <aside className="left-panel">
+          {/* App header */}
+          <div className="app-head">
+            <div className="app-mark"><CarRoadIcon /></div>
+            <div className="app-title-wrap">
+              <div className="app-title">Test Drive · Route Planner</div>
+              <div className="app-tagline">Generate the perfect route for every customer</div>
+            </div>
+            <ThemeToggle />
           </div>
-          <ThemeToggle />
-        </header>
 
-        <section className="grid h-[calc(100dvh-80px)] grid-cols-1 gap-0 lg:grid-cols-[400px_1fr]">
-          <div className="space-y-3 overflow-hidden border-b p-3 sm:p-4 lg:h-full lg:border-b-0 lg:border-r">
-            {routeError ? (
-              <Alert className="border-destructive/70 bg-destructive/20 text-destructive-foreground">
-                <AlertTitle>Route generation failed</AlertTitle>
-                <AlertDescription>{routeError}</AlertDescription>
-              </Alert>
-            ) : null}
-            {!routeError && routeNotice ? (
-              <Alert>
-                <AlertTitle>Route quality notice</AlertTitle>
-                <AlertDescription>{routeNotice}</AlertDescription>
-              </Alert>
-            ) : null}
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Quick Start</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm text-muted-foreground">
-                <p>1. Enter or paste your dealership address.</p>
-                <p>2. Pick drive duration and route character.</p>
-                <p>3. Click Generate Route and export to navigation apps.</p>
-              </CardContent>
-            </Card>
+          {/* Scrollable content */}
+          <div className="left-scroll">
+            {routeError && (
+              <div className="alert-banner">
+                <span className="banner-icon"><AlertIcon /></span>
+                <div>
+                  <div className="banner-title">Could not build a route</div>
+                  <div className="banner-msg">{routeError}</div>
+                </div>
+              </div>
+            )}
+            {!routeError && routeNotice && (
+              <div className="notice-banner">
+                <span className="banner-icon"><AlertIcon /></span>
+                <div>
+                  <div className="banner-title">Route quality notice</div>
+                  <div className="banner-msg">{routeNotice}</div>
+                </div>
+              </div>
+            )}
 
             <RouteForm loading={loading} loadingMessage={loadingMessage} onSubmit={generateRoute} />
 
-            {stats ? (
-              <>
-                <Separator />
-                <RouteStats stats={stats} />
-              </>
-            ) : null}
+            {stats && <RouteStats stats={stats} />}
 
-            {exports ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Export</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ExportButtons googleMapsUrl={exports.googleMapsUrl} />
-                </CardContent>
-              </Card>
-            ) : null}
+            {exports && (
+              <div>
+                <div className="panel-section-title" style={{ marginBottom: 10 }}>Export route</div>
+                <ExportButtons googleMapsUrl={exports.googleMapsUrl} wazeUrl={exports.wazeUrl} />
+              </div>
+            )}
           </div>
 
-          <div className="space-y-0 overflow-hidden p-0">
-            <Card className="h-full rounded-none border-0">
-              <CardHeader className="flex-row items-center justify-between space-y-0 px-3 py-3 sm:px-4">
-                <CardTitle className="text-base">Route Preview</CardTitle>
-                {stats ? (
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <Badge variant="outline">Seed {stats.variationSeed}</Badge>
-                    <Badge variant="outline">Error {stats.durationErrorPct.toFixed(1)}%</Badge>
-                    <Badge variant="outline">U-turns {stats.uturnCount}</Badge>
-                  </div>
-                ) : null}
-              </CardHeader>
-              <CardContent className="h-[calc(100%-64px)] p-0">
-                <RouteMap dealershipLatLng={dealershipLatLng} routePath={routePath} />
-              </CardContent>
-            </Card>
+          {/* Footer */}
+          <div className="panel-foot">
+            <span className="panel-foot-live">{footerStatus}</span>
+            <span>v 2.4.0</span>
           </div>
-        </section>
-      </main>
+        </aside>
+
+        {/* ── Right panel (map) ── */}
+        <div className="right-panel">
+          <RouteMap dealershipLatLng={dealershipLatLng} routePath={routePath} />
+        </div>
+      </div>
     </APIProvider>
   );
 }
