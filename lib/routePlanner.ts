@@ -1,5 +1,5 @@
 import { createRoutePatterns, type RouteFallbackLevel } from "@/lib/fallbackRouting";
-import { generateWaypoints } from "@/lib/generateWaypoints";
+import { getAvgSpeed } from "@/lib/generateWaypoints";
 import {
   getDeadEndProxy,
   getDurationMinutes,
@@ -7,13 +7,14 @@ import {
   getUTurnCount,
   makeFingerprint,
 } from "@/lib/routeMetrics";
+import { probeRoadWaypoints, sortByAngle } from "@/lib/probeRoutes";
 import { runWaypointPipeline } from "@/lib/waypointPipeline";
 import type { LatLng, RouteCharacter } from "@/types/route";
 
 type PlannerConfig = {
   durationTolerancePrimary: number;
   durationToleranceFallback: number;
-  maxCandidates: {
+  maxProbeSets: {
     short: number;
     medium: number;
     long: number;
@@ -29,11 +30,11 @@ type PlannerConfig = {
 
 export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
   durationTolerancePrimary: 0.15,
-  durationToleranceFallback: 0.2,
-  maxCandidates: {
-    short: 6,
-    medium: 8,
-    long: 10,
+  durationToleranceFallback: 0.25,
+  maxProbeSets: {
+    short: 4,
+    medium: 5,
+    long: 6,
   },
   weights: {
     durationError: 4.0,
@@ -93,32 +94,40 @@ function uniquenessPenalty(fingerprint: string, recentFingerprints: string[]): n
 export async function planRoute(input: PlanRouteInput): Promise<PlanRouteResult> {
   const config = input.config ?? DEFAULT_PLANNER_CONFIG;
   const tier = getTier(input.durationMinutes);
-  const maxCandidates = config.maxCandidates[tier];
-  const baseWaypointCount = 3;
+  const maxProbeSets = config.maxProbeSets[tier];
+
+  const avgSpeed = getAvgSpeed(input.routeCharacter);
+  const estimatedDistanceKm = (input.durationMinutes / 60) * avgSpeed;
+  const baseRadiusKm = estimatedDistanceKm / (2 * Math.PI);
 
   const candidates: RouteCandidate[] = [];
 
-  for (let i = 0; i < maxCandidates; i += 1) {
-    if (i === 0) input.onProgress?.("Building route candidates...");
-    if (i === Math.floor(maxCandidates / 3)) input.onProgress?.("Evaluating alternatives...");
-    if (i === Math.floor((2 * maxCandidates) / 3)) input.onProgress?.("Finalizing best match...");
-    const waypointCount = Math.max(4, baseWaypointCount + Math.round(randomBetween(-2, 2)));
-    const radiusScale = randomBetween(0.72, 1.26);
-    const angle = randomBetween(0, 360);
-    const ellipseRatio = randomBetween(0.82, 1.18);
-    const generatedWaypoints = generateWaypoints(
-      input.origin,
-      input.durationMinutes,
-      input.routeCharacter,
-      radiusScale,
-      waypointCount,
-      angle,
-      ellipseRatio,
-    );
-    const waypointPipeline = runWaypointPipeline(generatedWaypoints);
-    if (waypointPipeline.waypoints.length < 3) continue;
+  for (let i = 0; i < maxProbeSets; i += 1) {
+    if (i === 0) input.onProgress?.("Probing road network...");
+    if (i === Math.floor(maxProbeSets / 2)) input.onProgress?.("Evaluating alternatives...");
+    if (i === maxProbeSets - 1) input.onProgress?.("Finalizing best match...");
 
-    const patterns = createRoutePatterns(waypointPipeline.waypoints);
+    // Each probe set starts at a random angle so repeated Generate Route clicks
+    // explore different parts of the road network around the dealership.
+    const startAngle = randomBetween(0, 120);
+    const radiusScale = randomBetween(0.8, 1.2);
+    const radiusKm = baseRadiusKm * radiusScale;
+    const probeAngles = [startAngle, startAngle + 120, startAngle + 240];
+
+    const roadWaypoints = await probeRoadWaypoints(
+      input.origin,
+      probeAngles,
+      radiusKm,
+      input.computeRoute,
+    );
+
+    // Sort road-anchored points clockwise by angle so the route sweeps around
+    // the dealership without crossing itself.
+    const sorted = sortByAngle(input.origin, roadWaypoints);
+    const pipeline = runWaypointPipeline(sorted);
+    if (pipeline.waypoints.length < 2) continue;
+
+    const patterns = createRoutePatterns(pipeline.waypoints);
     for (const pattern of patterns) {
       try {
         const result = await input.computeRoute(pattern.waypoints);
@@ -145,9 +154,9 @@ export async function planRoute(input: PlanRouteInput): Promise<PlanRouteResult>
           uturnCount,
           overlapRatio,
           radiusScale,
-          waypointCount,
-          angle,
-          ellipseRatio,
+          waypointCount: pattern.waypoints.length,
+          angle: startAngle,
+          ellipseRatio: 1,
           stopover: pattern.stopover,
           fallbackLevel: pattern.fallbackLevel,
         });
@@ -159,11 +168,11 @@ export async function planRoute(input: PlanRouteInput): Promise<PlanRouteResult>
           deadEndCount <= 1 &&
           uniquePenalty === 0
         ) {
-          i = maxCandidates;
+          i = maxProbeSets;
           break;
         }
       } catch {
-        // Continue with next candidate.
+        // Continue with next pattern.
       }
     }
   }
