@@ -9,7 +9,24 @@ import {
 } from "@/lib/routeMetrics";
 import { probeRoadWaypoints, sortByAngle } from "@/lib/probeRoutes";
 import { runWaypointPipeline } from "@/lib/waypointPipeline";
-import type { LatLng, RouteCharacter } from "@/types/route";
+import type { LatLng, LoopSize, RouteCharacter, WaypointDensity } from "@/types/route";
+
+// "More waypoints" on the road-probe model means probing more angles around the
+// dealership. Each probe point is snapped to a real road, so denser loops stay
+// U-turn-free instead of cutting across the ellipse.
+const DENSITY_PROBE_COUNT: Record<WaypointDensity, number> = {
+  standard: 3,
+  detailed: 5,
+  max: 6,
+};
+
+// Bias for the randomized radius window. Compact loops stay near the
+// dealership; wide loops roam further for the same target duration.
+const LOOP_SIZE_BIAS: Record<LoopSize, number> = {
+  compact: 0.82,
+  standard: 1,
+  wide: 1.22,
+};
 
 type PlannerConfig = {
   durationTolerancePrimary: number;
@@ -66,6 +83,8 @@ type PlanRouteInput = {
   routeCharacter: RouteCharacter;
   config?: PlannerConfig;
   recentFingerprints: string[];
+  loopSize?: LoopSize;
+  waypointDensity?: WaypointDensity;
   computeRoute: (waypoints: LatLng[]) => Promise<unknown>;
   onProgress?: (message: string) => void;
 };
@@ -95,6 +114,8 @@ export async function planRoute(input: PlanRouteInput): Promise<PlanRouteResult>
   const config = input.config ?? DEFAULT_PLANNER_CONFIG;
   const tier = getTier(input.durationMinutes);
   const maxProbeSets = config.maxProbeSets[tier];
+  const probeCount = DENSITY_PROBE_COUNT[input.waypointDensity ?? "standard"];
+  const loopSizeBias = LOOP_SIZE_BIAS[input.loopSize ?? "standard"];
 
   const avgSpeed = getAvgSpeed(input.routeCharacter);
   const estimatedDistanceKm = (input.durationMinutes / 60) * avgSpeed;
@@ -109,10 +130,11 @@ export async function planRoute(input: PlanRouteInput): Promise<PlanRouteResult>
 
     // Each probe set starts at a random angle so repeated Generate Route clicks
     // explore different parts of the road network around the dealership.
-    const startAngle = randomBetween(0, 120);
-    const radiusScale = randomBetween(0.8, 1.2);
+    const angleStep = 360 / probeCount;
+    const startAngle = randomBetween(0, angleStep);
+    const radiusScale = randomBetween(0.8, 1.2) * loopSizeBias;
     const radiusKm = baseRadiusKm * radiusScale;
-    const probeAngles = [startAngle, startAngle + 120, startAngle + 240];
+    const probeAngles = Array.from({ length: probeCount }, (_, k) => startAngle + k * angleStep);
 
     const roadWaypoints = await probeRoadWaypoints(
       input.origin,

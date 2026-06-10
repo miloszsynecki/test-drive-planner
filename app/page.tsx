@@ -3,14 +3,15 @@
 import { useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { APIProvider } from "@vis.gl/react-google-maps";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { ExportButtons } from "@/components/ExportButtons";
-import { RouteForm } from "@/components/RouteForm";
+import { RouteForm, type RouteFormInput } from "@/components/RouteForm";
 import { RouteStats } from "@/components/RouteStats";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { Button } from "@/components/ui/button";
 import { buildExportUrls } from "@/lib/buildExportUrls";
 import { getAvgSpeed } from "@/lib/generateWaypoints";
-import { createGoogleRouteProvider } from "@/lib/googleRoutesProvider";
+import { createGoogleRouteProvider, createRouteCache } from "@/lib/googleRoutesProvider";
 import { toUserRouteError } from "@/lib/routeErrors";
 import { DEFAULT_PLANNER_CONFIG, planRoute } from "@/lib/routePlanner";
 import {
@@ -20,7 +21,7 @@ import {
   getPathFromRoute,
   getUTurnCount,
 } from "@/lib/routeMetrics";
-import type { GeneratedRouteStats, LatLng, RouteCharacter } from "@/types/route";
+import type { GeneratedRouteStats, LatLng } from "@/types/route";
 
 const RouteMap = dynamic(
   () => import("@/components/RouteMap").then((m) => m.RouteMap),
@@ -51,6 +52,8 @@ export default function Page() {
   const [routeNotice, setRouteNotice] = useState("");
   const [loadingMessage, setLoadingMessage] = useState("Finding best route...");
   const recentFingerprintsRef = useRef<string[]>([]);
+  const routeCacheRef = useRef(createRouteCache());
+  const lastInputRef = useRef<RouteFormInput | null>(null);
 
   const exports = useMemo(() => {
     if (!dealershipLatLng || !dealershipAddress || waypoints.length === 0) return null;
@@ -106,12 +109,8 @@ export default function Page() {
     };
   };
 
-  const generateRoute = async (input: {
-    address: string;
-    latLng: LatLng | null;
-    durationMinutes: number;
-    routeCharacter: RouteCharacter;
-  }) => {
+  const generateRoute = async (input: RouteFormInput) => {
+    lastInputRef.current = input;
     setLoading(true);
     setRouteError("");
     setRouteNotice("");
@@ -126,7 +125,7 @@ export default function Page() {
 
       const avgSpeed = getAvgSpeed(input.routeCharacter);
       const variationSeed = Math.floor(Math.random() * 1000000);
-      const provider = createGoogleRouteProvider(routesLib, resolvedLatLng);
+      const provider = createGoogleRouteProvider(routesLib, resolvedLatLng, routeCacheRef.current);
       setLoadingMessage("Generating loop options...");
 
       const selection = await planRoute({
@@ -135,6 +134,8 @@ export default function Page() {
         routeCharacter: input.routeCharacter,
         config: DEFAULT_PLANNER_CONFIG,
         recentFingerprints: recentFingerprintsRef.current,
+        loopSize: input.loopSize,
+        waypointDensity: input.waypointDensity,
         computeRoute: provider.computeRoute,
         onProgress: (message) => setLoadingMessage(message),
       });
@@ -232,6 +233,20 @@ export default function Page() {
             )}
 
             <RouteForm loading={loading} loadingMessage={loadingMessage} onSubmit={generateRoute} />
+
+            {stats && (
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={loading}
+                onClick={() => {
+                  if (lastInputRef.current) generateRoute(lastInputRef.current);
+                }}
+              >
+                <RefreshCw className={`h-4 w-4${loading ? " animate-spin" : ""}`} />
+                Generate another
+              </Button>
+            )}
 
             {stats && <RouteStats stats={stats} />}
 

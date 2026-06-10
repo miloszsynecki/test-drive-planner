@@ -1,5 +1,9 @@
 export type RouteCharacter = "city" | "mixed" | "highway" | "scenic";
 
+export type LoopSize = "compact" | "standard" | "wide";
+
+export type WaypointDensity = "standard" | "detailed" | "max";
+
 export type LatLng = {
   lat: number;
   lng: number;

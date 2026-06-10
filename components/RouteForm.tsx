@@ -1,23 +1,27 @@
 "use client";
 
 import { useState } from "react";
-import { Timer, Route, Loader2 } from "lucide-react";
+import { Timer, Route, Maximize2, Layers, Loader2 } from "lucide-react";
 import { AddressInput } from "@/components/AddressInput";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { LatLng, RouteCharacter } from "@/types/route";
+import type { LatLng, LoopSize, RouteCharacter, WaypointDensity } from "@/types/route";
+
+export type RouteFormInput = {
+  address: string;
+  latLng: LatLng | null;
+  durationMinutes: number;
+  routeCharacter: RouteCharacter;
+  loopSize: LoopSize;
+  waypointDensity: WaypointDensity;
+};
 
 type RouteFormProps = {
   loading: boolean;
   loadingMessage?: string;
-  onSubmit: (input: {
-    address: string;
-    latLng: LatLng | null;
-    durationMinutes: number;
-    routeCharacter: RouteCharacter;
-  }) => Promise<void> | void;
+  onSubmit: (input: RouteFormInput) => Promise<void> | void;
 };
 
 function FieldLabel({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
@@ -34,6 +38,8 @@ export function RouteForm({ loading, loadingMessage, onSubmit }: RouteFormProps)
   const [selectedLatLng, setSelectedLatLng] = useState<LatLng | null>(null);
   const [durationMinutes, setDurationMinutes] = useState("20");
   const [routeCharacter, setRouteCharacter] = useState<RouteCharacter>("mixed");
+  const [loopSize, setLoopSize] = useState<LoopSize>("standard");
+  const [waypointDensity, setWaypointDensity] = useState<WaypointDensity>("detailed");
   const [addressError, setAddressError] = useState("");
 
   return (
@@ -53,7 +59,7 @@ export function RouteForm({ loading, loadingMessage, onSubmit }: RouteFormProps)
               return;
             }
             setAddressError("");
-            onSubmit({ address, latLng: selectedLatLng, durationMinutes: Number(durationMinutes), routeCharacter });
+            onSubmit({ address, latLng: selectedLatLng, durationMinutes: Number(durationMinutes), routeCharacter, loopSize, waypointDensity });
           }}
         >
           <div className="flex flex-col gap-1.5">
@@ -93,6 +99,36 @@ export function RouteForm({ loading, loadingMessage, onSubmit }: RouteFormProps)
                 <SelectItem value="scenic">Scenic &amp; Winding</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel icon={<Maximize2 className="h-3 w-3" />}>Loop size</FieldLabel>
+              <Select value={loopSize} onValueChange={(v) => setLoopSize(v as LoopSize)}>
+                <SelectTrigger className="h-11 bg-input">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="compact">Compact</SelectItem>
+                  <SelectItem value="standard">Standard</SelectItem>
+                  <SelectItem value="wide">Wide</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel icon={<Layers className="h-3 w-3" />}>Waypoint detail</FieldLabel>
+              <Select value={waypointDensity} onValueChange={(v) => setWaypointDensity(v as WaypointDensity)}>
+                <SelectTrigger className="h-11 bg-input">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="standard">Standard</SelectItem>
+                  <SelectItem value="detailed">Detailed</SelectItem>
+                  <SelectItem value="max">Maximum</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <Button type="submit" className="mt-1 w-full font-semibold" disabled={loading}>
