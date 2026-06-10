@@ -24,6 +24,15 @@ npm run dev
 
 4. Open `http://localhost:3000`
 
+## Tests
+
+Pure planner/metric helpers are covered by Vitest:
+
+```bash
+npm test        # run once
+npm run test:watch
+```
+
 ## Google Cloud Setup (cheap mode)
 
 1. Create/select project in Google Cloud Console.
