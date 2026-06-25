@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { flowThroughPoint, planLoop } from "@/lib/loopEngine";
+import { flowThroughPoint, planLoop, removeBacktracks } from "@/lib/loopEngine";
 import type { LatLng } from "@/types/route";
 
 // Build a synthetic leg the way the engine consumes one: a `path` polyline plus a
@@ -138,5 +138,48 @@ describe("planLoop", () => {
       maxAttempts: 1,
     });
     expect(first.fingerprint).not.toEqual(second.fingerprint);
+  });
+});
+
+describe("removeBacktracks", () => {
+  const E = 0.0012; // ~130m per step — comfortably more than one grid cell
+
+  it("collapses a pure out-and-back spur", () => {
+    const path: LatLng[] = [
+      { lat: 0, lng: 0 },
+      { lat: 0, lng: E },
+      { lat: 0, lng: 2 * E }, // tip
+      { lat: 0, lng: E },
+      { lat: 0, lng: 0 },
+    ];
+    const cleaned = removeBacktracks(path);
+    expect(cleaned.length).toBeLessThan(path.length);
+    expect(Math.max(...cleaned.map((p) => p.lng))).toBeLessThan(2 * E);
+  });
+
+  it("preserves a genuine loop that returns via different cells", () => {
+    const loop: LatLng[] = [
+      { lat: 0, lng: 0 },
+      { lat: E, lng: 0 },
+      { lat: E, lng: E },
+      { lat: 0, lng: E },
+      { lat: 0, lng: 0 },
+    ];
+    expect(removeBacktracks(loop)).toHaveLength(loop.length);
+  });
+
+  it("removes a spur hanging off a loop but keeps the loop", () => {
+    const path: LatLng[] = [
+      { lat: 0, lng: 0 },
+      { lat: E, lng: 0 },
+      { lat: E, lng: E },
+      { lat: 0, lng: E }, // junction
+      { lat: 0, lng: 2 * E }, // spur tip
+      { lat: 0, lng: E }, // back to junction
+      { lat: 0, lng: 0 },
+    ];
+    const cleaned = removeBacktracks(path);
+    expect(cleaned).toHaveLength(5); // the four loop corners + closing point
+    expect(Math.max(...cleaned.map((p) => p.lng))).toBeLessThan(2 * E);
   });
 });

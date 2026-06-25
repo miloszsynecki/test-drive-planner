@@ -6,7 +6,6 @@ import {
   getUTurnCount,
   makeFingerprint,
 } from "@/lib/routeMetrics";
-import { runWaypointPipeline } from "@/lib/waypointPipeline";
 import type { LatLng, LoopSize } from "@/types/route";
 
 // Seed assumption only — the engine measures the loop's real duration from
@@ -121,6 +120,63 @@ function pathLength(path: LatLng[], end = path.length - 1): number {
   return total;
 }
 
+// Remove out-and-back excursions (spurs / dead-ends) from a polyline.
+//
+// The flow-through guard stops a leg from being *forced* into a dead-end, but on
+// a sparse or radial network a leg can still drive out along the only arterial
+// and the next leg has to come back along it before heading elsewhere — a visible
+// spur off the loop. Snapping each point to a coarse grid cell and cancelling
+// immediate backtracks (the same reduction that turns a walk into its underlying
+// cycle, like removing adjacent inverse pairs in a free group) collapses any
+// out-and-back of any length while leaving genuine loops — which return via
+// *different* cells — untouched.
+export function removeBacktracks(path: LatLng[], cellMeters = 45): LatLng[] {
+  if (path.length < 4) return path;
+
+  const ref = path[0];
+  const cosRef = Math.cos(ref.lat * DEG_TO_RAD);
+  const cellOf = (p: LatLng): string => {
+    const cx = Math.round(((p.lng - ref.lng) * 111_320 * cosRef) / cellMeters);
+    const cy = Math.round(((p.lat - ref.lat) * 111_320) / cellMeters);
+    return `${cx}:${cy}`;
+  };
+
+  const stack: Array<{ key: string; pts: LatLng[] }> = [];
+  for (const p of path) {
+    const key = cellOf(p);
+    const top = stack[stack.length - 1];
+    if (top && top.key === key) {
+      top.pts.push(p); // still in the same cell — extend it
+      continue;
+    }
+    const prev = stack[stack.length - 2];
+    if (prev && prev.key === key) {
+      stack.pop(); // stepped back to where we were — cancel the excursion tip
+      continue;
+    }
+    stack.push({ key, pts: [p] });
+  }
+
+  const out: LatLng[] = [];
+  for (const run of stack) for (const p of run.pts) out.push(p);
+  return out;
+}
+
+// Evenly spaced interior points along a path, used as export waypoints. Sampling
+// the *cleaned* loop means Google Maps / Waze re-trace the spur-free route rather
+// than the raw one.
+function sampleWaypoints(path: LatLng[], count: number): LatLng[] {
+  if (path.length <= 2) return [];
+  const interior = path.slice(1, -1);
+  if (interior.length <= count) return interior;
+  const result: LatLng[] = [];
+  for (let i = 1; i <= count; i += 1) {
+    const idx = Math.floor((interior.length - 1) * (i / (count + 1)));
+    result.push(interior[idx]);
+  }
+  return result;
+}
+
 // Append a leg's path to the accumulator, skipping the shared junction vertex so
 // the concatenated polyline has no duplicated points at the seams.
 function appendPath(acc: LatLng[], next: LatLng[]): void {
@@ -203,12 +259,21 @@ export async function planLoop(input: PlanLoopInput): Promise<LoopResult> {
     }
     if (built.route.path.length < 2) continue;
 
-    const durationMinutes = getDurationMinutes(built.route);
-    const distanceKm =
-      getLegs(built.route).reduce((sum, leg) => sum + Number(leg.distanceMeters ?? 0), 0) / 1000;
-    const uturnCount = getUTurnCount(built.route);
-    const overlapRatio = getOverlapRatio(built.route);
-    const fingerprint = makeFingerprint(built.route);
+    // Cancel out-and-back spurs from the assembled loop, then measure the cleaned
+    // route — that is what the user drives and what export should follow.
+    const rawLength = pathLength(built.route.path);
+    const cleanedPath = removeBacktracks(built.route.path);
+    const cleanedLength = pathLength(cleanedPath);
+    const lengthRatio = rawLength > 0 ? cleanedLength / rawLength : 1;
+    const route: SyntheticRoute = { path: cleanedPath, legs: built.route.legs };
+
+    // Trimming the spurs removes real (if pointless) driving, so scale the
+    // measured duration down by the fraction of the polyline we kept.
+    const durationMinutes = getDurationMinutes(built.route) * lengthRatio;
+    const distanceKm = cleanedLength / 1000;
+    const uturnCount = getUTurnCount(route);
+    const overlapRatio = getOverlapRatio(route);
+    const fingerprint = makeFingerprint(route);
 
     const durationError =
       input.durationMinutes > 0
@@ -217,10 +282,10 @@ export async function planLoop(input: PlanLoopInput): Promise<LoopResult> {
     const repeatPenalty = recent.includes(fingerprint) ? 1 : 0;
     const score = durationError * 4 + uturnCount * 1 + overlapRatio * 3 + repeatPenalty * 2;
 
-    const pipeline = runWaypointPipeline(built.waypoints);
+    const exportWaypoints = sampleWaypoints(cleanedPath, Math.max(n, 6));
     const candidate: LoopResult & { score: number } = {
-      route: built.route,
-      waypoints: pipeline.waypoints.length >= 2 ? pipeline.waypoints : built.waypoints,
+      route,
+      waypoints: exportWaypoints.length >= 2 ? exportWaypoints : built.waypoints,
       durationMinutes,
       distanceKm,
       uturnCount,
