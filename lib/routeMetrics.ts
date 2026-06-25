@@ -1,15 +1,8 @@
 import type { LatLng } from "@/types/route";
 
-type RouteStep = {
-  navigationInstruction?: {
-    instructions?: string;
-  };
-};
-
 type RouteLeg = {
   distanceMeters?: number;
   durationMillis?: number;
-  steps?: RouteStep[];
 };
 
 type RouteShape = {
@@ -143,20 +136,6 @@ export function getOverlapRatio(route: unknown, cellMeters = 25): number {
     if (max - min >= 2) revisited += 1;
   }
   return revisited / cellSegments.size;
-}
-
-export function getDeadEndProxy(route: unknown): number {
-  const steps = getLegs(route).flatMap((leg) => leg.steps ?? []);
-  let count = 0;
-  for (let i = 1; i < steps.length; i += 1) {
-    const prev = steps[i - 1];
-    const curr = steps[i];
-    const prevInstruction = (prev.navigationInstruction?.instructions ?? "").toLowerCase();
-    const currInstruction = (curr.navigationInstruction?.instructions ?? "").toLowerCase();
-    const shortOutAndBack = prevInstruction.includes("turn") && currInstruction.includes("turn");
-    if (shortOutAndBack) count += 1;
-  }
-  return count;
 }
 
 export function makeFingerprint(route: unknown): string {

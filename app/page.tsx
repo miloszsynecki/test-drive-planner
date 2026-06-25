@@ -10,17 +10,10 @@ import { RouteStats } from "@/components/RouteStats";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { buildExportUrls } from "@/lib/buildExportUrls";
-import { getAvgSpeed } from "@/lib/generateWaypoints";
 import { createGoogleRouteProvider, createRouteCache } from "@/lib/googleRoutesProvider";
 import { toUserRouteError } from "@/lib/routeErrors";
-import { DEFAULT_PLANNER_CONFIG, planRoute } from "@/lib/routePlanner";
-import {
-  getDurationMinutes,
-  getLegs,
-  getOverlapRatio,
-  getPathFromRoute,
-  getUTurnCount,
-} from "@/lib/routeMetrics";
+import { planLoop, type LoopResult } from "@/lib/loopEngine";
+import { getPathFromRoute } from "@/lib/routeMetrics";
 import type { GeneratedRouteStats, LatLng } from "@/types/route";
 
 const RouteMap = dynamic(
@@ -84,28 +77,19 @@ export default function Page() {
     }
   };
 
-  const calculateStats = (
-    route: unknown,
-    avgSpeedKmh: number,
-    requestedMinutes: number,
-    variationSeed: number,
-    fallbackLevel: "primary-stopover" | "sparse-stopover",
-    usedUTurnFallback: boolean,
-  ): GeneratedRouteStats => {
-    const legs = getLegs(route);
-    const totalMeters = legs.reduce((sum, leg) => sum + Number(leg.distanceMeters ?? 0), 0);
-    const totalDurationMinutes = getDurationMinutes(route);
+  const calculateStats = (result: LoopResult, requestedMinutes: number): GeneratedRouteStats => {
+    const avgSpeedKmh =
+      result.durationMinutes > 0 ? result.distanceKm / (result.durationMinutes / 60) : 0;
     return {
-      totalDistanceKm: totalMeters / 1000,
-      totalDurationMinutes,
-      waypointCount: legs.length,
-      avgSpeedKmh,
-      durationErrorPct: (Math.abs(totalDurationMinutes - requestedMinutes) / requestedMinutes) * 100,
-      uturnCount: getUTurnCount(route),
-      overlapRatio: getOverlapRatio(route),
-      variationSeed,
-      fallbackLevel,
-      usedUTurnFallback,
+      totalDistanceKm: result.distanceKm,
+      totalDurationMinutes: result.durationMinutes,
+      waypointCount: result.waypoints.length,
+      avgSpeedKmh: Math.round(avgSpeedKmh),
+      durationErrorPct:
+        (Math.abs(result.durationMinutes - requestedMinutes) / requestedMinutes) * 100,
+      uturnCount: result.uturnCount,
+      overlapRatio: result.overlapRatio,
+      qualityNotice: result.qualityNotice,
     };
   };
 
@@ -123,34 +107,27 @@ export default function Page() {
       const resolvedLatLng = input.latLng ?? (await resolveWithPlaces(input.address));
       if (!resolvedLatLng) throw new Error("Address not found");
 
-      const avgSpeed = getAvgSpeed(input.routeCharacter);
-      const variationSeed = Math.floor(Math.random() * 1000000);
-      const provider = createGoogleRouteProvider(routesLib, resolvedLatLng, routeCacheRef.current);
-      setLoadingMessage("Generating loop options...");
+      const provider = createGoogleRouteProvider(routesLib, routeCacheRef.current);
+      setLoadingMessage("Building loop...");
 
-      const selection = await planRoute({
+      const selection = await planLoop({
         origin: resolvedLatLng,
         durationMinutes: input.durationMinutes,
-        routeCharacter: input.routeCharacter,
-        config: DEFAULT_PLANNER_CONFIG,
-        recentFingerprints: recentFingerprintsRef.current,
         loopSize: input.loopSize,
-        waypointDensity: input.waypointDensity,
-        computeRoute: provider.computeRoute,
+        computeLeg: provider.computeLeg,
+        recentFingerprints: recentFingerprintsRef.current,
         onProgress: (message) => setLoadingMessage(message),
       });
-      const best = selection.best;
-      const usedUTurnFallback = selection.usedUTurnFallback;
-      const fingerprint = selection.bestFingerprint;
+      const fingerprint = selection.fingerprint;
       recentFingerprintsRef.current = [fingerprint, ...recentFingerprintsRef.current.filter((f) => f !== fingerprint)].slice(0, 5);
 
-      setRoutePath(getPathFromRoute(best.route));
+      setRoutePath(getPathFromRoute(selection.route));
       setDealershipAddress(input.address);
       setDealershipLatLng(resolvedLatLng);
-      setWaypoints(best.generatedWaypoints);
-      setStats(calculateStats(best.route, avgSpeed, input.durationMinutes, variationSeed, best.fallbackLevel, usedUTurnFallback));
-      if (usedUTurnFallback) {
-        setRouteNotice("No U-turn-free route was found. Showing the best available route with minimal U-turns.");
+      setWaypoints(selection.waypoints);
+      setStats(calculateStats(selection, input.durationMinutes));
+      if (selection.qualityNotice) {
+        setRouteNotice("This loop has minor retracing on part of the road network. Try 'Generate another' for a cleaner option.");
       }
     } catch (error) {
       setRouteNotice("");

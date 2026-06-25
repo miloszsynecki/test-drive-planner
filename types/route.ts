@@ -1,8 +1,4 @@
-export type RouteCharacter = "city" | "mixed" | "highway" | "scenic";
-
 export type LoopSize = "compact" | "standard" | "wide";
-
-export type WaypointDensity = "standard" | "detailed" | "max";
 
 export type LatLng = {
   lat: number;
@@ -17,7 +13,5 @@ export type GeneratedRouteStats = {
   durationErrorPct: number;
   uturnCount: number;
   overlapRatio: number;
-  variationSeed: number;
-  fallbackLevel: "primary-stopover" | "sparse-stopover";
-  usedUTurnFallback: boolean;
+  qualityNotice: boolean;
 };
