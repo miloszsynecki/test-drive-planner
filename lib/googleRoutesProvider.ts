@@ -6,14 +6,14 @@ type GoogleRoutesLibrary = {
   };
 };
 
-type RouteProvider = {
-  computeRoute: (waypoints: LatLng[]) => Promise<unknown>;
+export type LegProvider = {
+  computeLeg: (from: LatLng, to: LatLng) => Promise<unknown>;
 };
 
-// A session-scoped cache of computeRoutes results. The planner probes the road
-// network and evaluates many candidate patterns, and regenerating reuses the
-// same origin — keying by origin + waypoints lets identical billed calls be
-// served from memory instead of re-charging the Routes API.
+// A session-scoped cache of computeRoutes results. The loop engine walks the
+// road network one leg at a time and may re-probe the same anchor when refining
+// the loop length or regenerating — keying by from + to lets identical billed
+// calls be served from memory instead of re-charging the Routes API.
 export type RouteCache = Map<string, Promise<unknown>>;
 
 export function createRouteCache(): RouteCache {
@@ -22,56 +22,39 @@ export function createRouteCache(): RouteCache {
 
 function round(value: number): string {
   // ~1m precision: enough to dedupe identical requests without collapsing
-  // genuinely distinct waypoint sets.
+  // genuinely distinct points.
   return value.toFixed(5);
 }
 
-function cacheKey(origin: LatLng, waypoints: LatLng[]): string {
-  const points = waypoints.map((p) => `${round(p.lat)},${round(p.lng)}`).join("|");
-  return `${round(origin.lat)},${round(origin.lng)}#${points}`;
+function cacheKey(from: LatLng, to: LatLng): string {
+  return `${round(from.lat)},${round(from.lng)}>${round(to.lat)},${round(to.lng)}`;
 }
 
 export function createGoogleRouteProvider(
   routesLib: GoogleRoutesLibrary,
-  origin: LatLng,
   cache?: RouteCache,
-): RouteProvider {
-  const computeUncached = async (waypoints: LatLng[]): Promise<unknown> => {
-    const requestBase = {
-      origin,
-      destination: origin,
+): LegProvider {
+  const computeUncached = async (from: LatLng, to: LatLng): Promise<unknown> => {
+    const result = await routesLib.Route.computeRoutes({
+      origin: from,
+      destination: to,
       travelMode: google.maps.TravelMode.DRIVING,
-      intermediates: waypoints.map((point) => ({ location: point, via: false })),
-    };
-
-    try {
-      const detailed = await routesLib.Route.computeRoutes({
-        ...requestBase,
-        fields: ["path", "legs", "legs.steps", "legs.steps.navigationInstruction"],
-      });
-      const route = detailed.routes?.[0];
-      if (!route) throw new Error("No route");
-      return route;
-    } catch {
-      const basic = await routesLib.Route.computeRoutes({
-        ...requestBase,
-        fields: ["path", "legs"],
-      });
-      const route = basic.routes?.[0];
-      if (!route) throw new Error("No route");
-      return route;
-    }
+      fields: ["path", "legs"],
+    });
+    const route = result.routes?.[0];
+    if (!route) throw new Error("No route");
+    return route;
   };
 
   return {
-    computeRoute: (waypoints: LatLng[]): Promise<unknown> => {
-      if (!cache) return computeUncached(waypoints);
+    computeLeg: (from: LatLng, to: LatLng): Promise<unknown> => {
+      if (!cache) return computeUncached(from, to);
 
-      const key = cacheKey(origin, waypoints);
+      const key = cacheKey(from, to);
       const cached = cache.get(key);
       if (cached) return cached;
 
-      const pending = computeUncached(waypoints);
+      const pending = computeUncached(from, to);
       cache.set(key, pending);
       // Don't cache failures — a transient error shouldn't poison later retries.
       pending.catch(() => cache.delete(key));
